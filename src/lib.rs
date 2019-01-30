@@ -49,15 +49,18 @@ extern "C" {
     fn gethostname(name: *mut c_char, len: size_t) -> c_int;
 }
 
-pub struct JsonLogger {
+pub struct JsonLogger<'a> {
     out: Stdout,
     level: LevelFilter,
     name: String,
     hostname: String,
     pid: i32,
+
+    msg_field: &'a str,
+    time_field: &'a str,
 }
 
-impl Log for JsonLogger {
+impl<'a> Log for JsonLogger<'a> {
     fn enabled(&self, metadata: &Metadata) -> bool {
         metadata.level() <= self.level
     }
@@ -70,7 +73,7 @@ impl Log for JsonLogger {
         let mut root = Object::new();
         root.insert("hostname".to_owned(), self.hostname.to_json());
         root.insert(
-            "level".to_owned(),
+            "level_value".to_owned(),
             match record.level() {
                 Level::Error => Json::U64(50),
                 Level::Warn => Json::U64(40),
@@ -79,9 +82,21 @@ impl Log for JsonLogger {
                 Level::Trace => Json::U64(10),
             },
         );
+
+        root.insert(
+            "level".to_owned(),
+            match record.level() {
+                Level::Error => Json::String(String::from("error")),
+                Level::Warn => Json::String(String::from("warn")),
+                Level::Info => Json::String(String::from("info")),
+                Level::Debug => Json::String(String::from("debug")),
+                Level::Trace => Json::String(String::from("trace")),
+            },
+        );
+
         root.insert("name".to_owned(), self.name.to_json());
         root.insert("pid".to_owned(), self.pid.to_json());
-        root.insert("msg".to_owned(), Json::Null);
+        root.insert(self.msg_field.to_owned(), Json::Null);
 
         let mut src = Object::new();
         src.insert("module_path".to_owned(), module_path.to_json());
@@ -90,7 +105,7 @@ impl Log for JsonLogger {
 
         root.insert("src".to_owned(), Json::Object(src));
         root.insert(
-            "time".to_owned(),
+            self.time_field.to_owned(),
             Json::String(time::now_utc().rfc3339().to_string()),
         );
         root.insert("v".to_owned(), Json::U64(0));
@@ -105,7 +120,7 @@ impl Log for JsonLogger {
             None => {
                 // If the log message is not JSON,
                 // we will fallback to treating it as a normal string.
-                root.insert("msg".to_owned(), Json::String(s));
+                root.insert(self.msg_field.to_owned(), Json::String(s));
             }
         }
 
@@ -138,6 +153,9 @@ pub fn init(name: &str, level: LevelFilter) -> Result<(), SetLoggerError> {
         name: name.to_owned(),
         hostname: hostname,
         pid: pid,
+
+        msg_field: "message",
+        time_field: "@timestamp",
     };
 
     log::set_boxed_logger(Box::new(logger))?;
